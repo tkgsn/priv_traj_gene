@@ -71,10 +71,10 @@ def make_gps(lat_range, lon_range, n_bins):
 
 
 def load_M1(dataset):
-    return normalize(np.load(f'/data/{dataset}/M1.npy'))
+    return normalize(np.load(get_datadir() / f'{dataset}/M1.npy'))
 
 def load_M2(dataset):
-    return normalize(np.load(f'/data/{dataset}/M2.npy'))
+    return normalize(np.load(get_datadir() / f'{dataset}/M2.npy'))
 
 def construct_M1(training_data, max_locs):
     reg1 = np.zeros([max_locs,max_locs])
