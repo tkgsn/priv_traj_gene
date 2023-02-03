@@ -323,11 +323,11 @@ if __name__ == "__main__":
     n_vocabs = len(dataset.vocab)
     
     M1 = load_M1(dataset)
-    M2 = load_M2(dataset)
+#     M2 = load_M2(dataset)
     
     print(M1)
-    print(M2)
-    generator = TransGeneratorWithAux(n_vocabs, args.window_size, dataset.seq_len, dataset.START_IDX, dataset.MASK_IDX, dataset.CLS_IDX, args.generator_embedding_dim, M1, M2).cuda(args.cuda_number)
+#     print(M2)
+    generator = TransGeneratorWithAux(n_vocabs, args.window_size, dataset.seq_len, dataset.START_IDX, dataset.MASK_IDX, dataset.CLS_IDX, args.generator_embedding_dim, M1, M1).cuda(args.cuda_number)
     generator.real = False
     discriminator = Discriminator(dataset.seq_len, total_locations=n_vocabs, embedding_dim=args.discriminator_embedding_dim).cuda(args.cuda_number2)
     
