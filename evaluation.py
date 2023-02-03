@@ -49,8 +49,8 @@ def js_divergence_p_r(data1, data2, vocab_size):
 
 def get_js_divergence(p1, p2):
 
-    p1 = p1 / (p1.sum()+1e-14)
-    p2 = p2 / (p2.sum()+1e-14)
+    p1 = p1 / (np.sum(p1)+1e-14)
+    p2 = p2 / (np.sum(p2)+1e-14)
     m = (p1 + p2) / 2
     js = 0.5 * scipy.stats.entropy(p1, m) + \
         0.5 * scipy.stats.entropy(p2, m)
