@@ -70,11 +70,11 @@ def make_gps(lat_range, lon_range, n_bins):
     return pd.DataFrame([state_to_latlon(i) for i in range((n_bins+2)**2)])
 
 
-def load_M1(dataset, name):
-    return normalize(np.load(f'/data/{dataset}/{name}/M1.npy'))
+def load_M1(dataset):
+    return normalize(np.load(f'/data/{dataset}/M1.npy'))
 
-def load_M2(dataset, name):
-    return normalize(np.load(f'/data/{dataset}/{name}/M2.npy'))
+def load_M2(dataset):
+    return normalize(np.load(f'/data/{dataset}/M2.npy'))
 
 def construct_M1(training_data, max_locs):
     reg1 = np.zeros([max_locs,max_locs])
