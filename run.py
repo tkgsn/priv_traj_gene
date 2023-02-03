@@ -32,7 +32,7 @@ def pretrain_generator(dataset, generator, save_name, batch_size, n_epochs, gene
 
     optim_kwargs = {'lr':generator_lr, 'weight_decay':1e-4, 'betas':(.9,.999)}
     optimizer = optim.Adam(generator.parameters(), **optim_kwargs)
-    loss_model = nn.NLLLoss(ignore_index=dataset.IGNORE_IDX)
+    loss_model = nn.NLLLoss(ignore_index=dataset.START_IDX)
     
     print_epoch = 10
     generator.train()
@@ -45,8 +45,7 @@ def pretrain_generator(dataset, generator, save_name, batch_size, n_epochs, gene
             target = batch['target'].cuda(cuda_number, non_blocking=True).reshape(-1)
 
             input = input.cuda(cuda_number, non_blocking=True).cuda(cuda_number, non_blocking=True)
-
-
+            
             output = generator(input)
             output_v = output.view(-1,output.shape[-1])
             
