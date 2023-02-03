@@ -323,8 +323,8 @@ if __name__ == "__main__":
     args.window_size = dataset.window_size
     n_vocabs = len(dataset.vocab)
     
-    M1 = load_M1(str(dataset).split("/")[0], str(dataset).split("/")[1])
-    M2 = load_M2(str(dataset).split("/")[0], str(dataset).split("/")[1])
+    M1 = load_M1(dataset)
+    M2 = load_M2(dataset)
     
     print(M1)
     print(M2)
