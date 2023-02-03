@@ -202,7 +202,7 @@ def compute_p_r_r(vocab_size, syn_data, training_data):
         if training_probs is None:
             continue
             
-        p_r_r = compute_JS_divergence(training_probs, syn_probs)
+        p_r_r = get_js_divergence(training_probs, syn_probs)
         
         results[j] = p_r_r
     
