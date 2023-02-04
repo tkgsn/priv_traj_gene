@@ -39,7 +39,7 @@ def next_location_top10(generator, query_data, batch_size):
 #         print(batch)
         prob = -torch.exp(generator(batch)).cpu().detach().numpy()
 #         print(prob)
-        top_10 = np.argsort(prob)[:, :3]
+        top_10 = np.argsort(prob)[:, :10]
         results.append(top_10)
     return pd.DataFrame(np.concatenate(results))
     
@@ -93,6 +93,7 @@ if __name__ == "__main__":
 
     generator = TransGeneratorWithAux(n_vocabs, args.window_size, dataset.seq_len, dataset.START_IDX, dataset.MASK_IDX, dataset.CLS_IDX, args.generator_embedding_dim, M1, M2).cuda(args.cuda_number)
     generator.data = dataset.data
+    generator.eval()
     generator.real = True
     print("load generator from", save_path / model_name)
     generator.load_state_dict(torch.load(save_path / model_name))
@@ -101,6 +102,6 @@ if __name__ == "__main__":
     real_start[:,generator.window_size] = torch.tensor(dataset.data[:, 0])
 
 
-#     run(generator, result_name, save_path, real_start, args.batch_size)
+    run(generator, result_name, save_path, real_start, args.batch_size)
     results = next_location_top10(generator, f"{args.data_name}.csv", args.batch_size)
     results.to_csv(save_path / "next_locations.csv", header=None, index=None)
