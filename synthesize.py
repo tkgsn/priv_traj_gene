@@ -101,6 +101,6 @@ if __name__ == "__main__":
     real_start[:,generator.window_size] = torch.tensor(dataset.data[:, 0])
 
 
-    run(generator, result_name, save_path, real_start, args.batch_size)
-    results = next_location_top10(generator, "test.csv", args.batch_size)
+#     run(generator, result_name, save_path, real_start, args.batch_size)
+    results = next_location_top10(generator, f"{args.data_name}.csv", args.batch_size)
     results.to_csv(save_path / "next_locations.csv", header=None, index=None)
