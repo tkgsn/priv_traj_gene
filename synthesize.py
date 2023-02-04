@@ -80,8 +80,8 @@ if __name__ == "__main__":
     args.generator_embedding_dim = args_["generator_embedding_dim"]
     args.discriminator_embedding_dim = args_["discriminator_embedding_dim"]
     args.save_name = args_["save_name"]
-    args.cuda_number = 1
-    args.batch_size = 2
+    args.cuda_number = 0
+    args.batch_size = 100
 
     dataset = load_dataset(args.dataset, args.data_name, args.window_size)
     generated_num = len(dataset)
