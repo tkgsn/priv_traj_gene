@@ -201,6 +201,8 @@ class TransGenerator(Transformer):
 #             if self.sum == True:
 #                 multiplier[v] += 1
 #             else:
+            if v >= self.n_locations:
+                continue
             multiplier[v] = 1
             
         for j, prob in enumerate(probs):
