@@ -258,13 +258,13 @@ def evaluation(dataset_name, save_name, syn_data_name, name):
     plot_hist2d(training_data, n_bins, vocab_size, save_path / f"{name}_pr_training.png")
     plot_hist2d(syn_data, n_bins, vocab_size, save_path / f"{name}_pr_syn.png")
 
-#     results["distance_from_0"] = plot_distance_from_0(training_data, syn_data, dataset_name, vocab_size, save_path / f"{name}_distance_from_0.png")
-#     print("distance_from_0", results["distance_from_0"][0])
-#     print("distance_from_0", results["distance_from_0"][1])
+    results["distance_from_0"] = plot_distance_from_0(training_data, syn_data, dataset_name, vocab_size, save_path / f"{name}_distance_from_0.png")
+    print("distance_from_0", results["distance_from_0"][0])
+    print("distance_from_0", results["distance_from_0"][1])
     
-#     results["distances"] = plot_distance(training_data, syn_data, dataset_name, vocab_size, save_path / f"{name}_distance.png")
-#     results["durations"] = plot_duration(training_data, syn_data, dataset_name, vocab_size, save_path / f"{name}_distances.png")
-#     results["gradius"] = plot_duration(training_data, syn_data, dataset_name, vocab_size, save_path / f"{name}_gradius.png")
+    results["distances"] = plot_distance(training_data, syn_data, dataset_name, vocab_size, save_path / f"{name}_distance.png")
+    results["durations"] = plot_duration(training_data, syn_data, dataset_name, vocab_size, save_path / f"{name}_distances.png")
+    results["gradius"] = plot_duration(training_data, syn_data, dataset_name, vocab_size, save_path / f"{name}_gradius.png")
     
     results["p_r_t"] = {}
     
@@ -276,8 +276,8 @@ def evaluation(dataset_name, save_name, syn_data_name, name):
     results["p_r"] = js_divergence_p_r(training_data, syn_data, vocab_size)
     print("p_r", results["p_r"])
     
-#     results["p_r_r"] = compute_p_r_r(vocab_size, syn_data, training_data)
-#     print("p_r_r", results["p_r_r"])
+    results["p_r_r"] = compute_p_r_r(vocab_size, syn_data, training_data)
+    print("p_r_r", results["p_r_r"])
                                      
     with open(save_path / f"{name}_results.json", "w") as f:
         json.dump(results, f)

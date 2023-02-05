@@ -149,9 +149,16 @@ class TransGenerator(Transformer):
         self.n_locations = n_vocabs - 5
         self.window_size = window_size
 
-    def make_initial_data(self, n_sample):
+    def make_initial_data(self, n_sample, data=[]):
+#         print(data)
+        
+        data_len = len(data[0]) if data != [] else 0
         samples = torch.tensor([[self.start_index]*(self.seq_len+self.window_size)]*n_sample).long()
         samples[:,0] = self.start_index
+        
+        samples[:, self.window_size:self.window_size+data_len] = torch.tensor(data)
+        
+#         print(samples)
 
         return samples
         
@@ -263,13 +270,13 @@ class TransGeneratorWithAux(TransGenerator):
         mat1 = torch.sigmoid(self.linear_M1_2(mat1))
         mat1 = F.normalize(mat1)
         
-#         mat2 = F.relu(self.linear_M2(mat2))
-#         mat2 = torch.sigmoid(self.linear_M2_2(mat2))
-#         mat2 = F.normalize(mat2)
+        mat2 = F.relu(self.linear_M2(mat2))
+        mat2 = torch.sigmoid(self.linear_M2_2(mat2))
+        mat2 = F.normalize(mat2)
         
         x = super().forward(x)
-#         x = x + torch.mul(x,mat1) + torch.mul(x,mat2)
-        x = x + torch.mul(x,mat1)
+        x = x + torch.mul(x,mat1) + torch.mul(x,mat2)
+#         x = x + torch.mul(x,mat1)
         x = F.log_softmax(x, dim=-1)
         return x
     

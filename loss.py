@@ -32,7 +32,7 @@ class GANLoss(nn.Module):
         one_hot = one_hot.type(torch.bool)
         one_hot = Variable(one_hot)
         one_hot = one_hot.cuda(self.cuda_number)
-        loss = torch.masked_select(torch.exp(prob), one_hot)
+        loss = 1-torch.masked_select(torch.exp(prob), one_hot)
         loss = loss * reward
         loss = torch.mean(loss)
         return loss

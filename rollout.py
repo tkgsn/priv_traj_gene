@@ -37,13 +37,17 @@ class Rollout(object):
         seq_len = x.size(1)
         start_indice = torch.tensor([[self.own_model.start_index]]*batch_size)
         for i in range(num):
-            for l in range(1, seq_len+1):
-                data = x.contiguous()
-                data[:, l:] = self.own_model.mask_index
-                data = torch.concat([start_indice, data], dim=1)
+            for l in range(1, seq_len):
+                data = x.contiguous()[:, :l]
+#                 data[:, l:] = self.own_model.mask_index
+                data = self.own_model.make_initial_data(batch_size, data)
+#                 data = torch.concat([start_indice, data], dim=1)
+#                 print(data)
                 samples = self.own_model.sample(batch_size, l, data).cuda(self.cuda_number)
+#                 print(samples)
                 pred = discriminator(samples)
                 pred = pred.detach().cpu().data[:,1].numpy()
+            
                 if i == 0:
                     rewards.append(pred)
                 else:

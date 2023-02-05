@@ -94,7 +94,7 @@ if __name__ == "__main__":
     generator = TransGeneratorWithAux(n_vocabs, args.window_size, dataset.seq_len, dataset.START_IDX, dataset.MASK_IDX, dataset.CLS_IDX, args.generator_embedding_dim, M1, M2).cuda(args.cuda_number)
     generator.data = dataset.data
     generator.eval()
-    generator.real = True
+    generator.real = False
     print("load generator from", save_path / model_name)
     generator.load_state_dict(torch.load(save_path / model_name))
 

@@ -205,9 +205,12 @@ def train(generator, discriminator, dataset, batch_size, save_name, n_epochs, ge
                 inputs = samples.contiguous()
 #                 print(samples)
 
-                rewards = rollout.get_lazy_reward(samples.cuda(cuda_number2), rollout_number, discriminator, generator.window_size)
+#                 rewards = rollout.get_lazy_reward(samples.cuda(cuda_number2), rollout_number, discriminator, generator.window_size)
+                rewards = rollout.get_reward(samples.cuda(cuda_number2), rollout_number, discriminator)
                 rewards = torch.Tensor(rewards)
                 rewards = torch.exp(rewards.cuda(cuda_number)).contiguous().view((-1,))
+#                 print(samples)
+                print(rewards)
                 start_time = np.random.choice(list(range(dataset.seq_len-generator.window_size)))
 #                 print(start_time)
                 targets = samples.contiguous()[:,start_time+1:start_time+generator.window_size+1].reshape(-1)
@@ -322,13 +325,15 @@ if __name__ == "__main__":
     args.window_size = dataset.window_size
     n_vocabs = len(dataset.vocab)
     
+    print("window size:", args.window_size)
+    
     M1 = load_M1(dataset)
-#     M2 = load_M2(dataset)
+    M2 = load_M2(dataset)
     
     print(M1)
-#     print(M2)
-#     generator = TransGeneratorWithAux(n_vocabs, args.window_size, dataset.seq_len, dataset.START_IDX, dataset.MASK_IDX, dataset.CLS_IDX, args.generator_embedding_dim, M1, M2).cuda(args.cuda_number)
-    generator = TransGeneratorWithAux(n_vocabs, args.window_size, dataset.seq_len, dataset.START_IDX, dataset.MASK_IDX, dataset.CLS_IDX, args.generator_embedding_dim, M1, M1).cuda(args.cuda_number)
+    print(M2)
+    generator = TransGeneratorWithAux(n_vocabs, args.window_size, dataset.seq_len, dataset.START_IDX, dataset.MASK_IDX, dataset.CLS_IDX, args.generator_embedding_dim, M1, M2).cuda(args.cuda_number)
+#     generator = TransGeneratorWithAux(n_vocabs, args.window_size, dataset.seq_len, dataset.START_IDX, dataset.MASK_IDX, dataset.CLS_IDX, args.generator_embedding_dim, M1, M1).cuda(args.cuda_number)
     generator.real = False
     discriminator = Discriminator(dataset.seq_len, total_locations=n_vocabs, embedding_dim=args.discriminator_embedding_dim).cuda(args.cuda_number2)
     
