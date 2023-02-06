@@ -248,10 +248,13 @@ def evaluation(dataset_name, save_name, syn_data_name, name):
     training_data_path = data_path / "training_data.csv"
     training_data = pd.read_csv(training_data_path, header=None)
     print("original", training_data_path)
+    
+    print(training_data)
 
     syn_data_path = save_path / syn_data_name
     syn_data = pd.read_csv(syn_data_path, header=None)
     print("syn", syn_data_path)
+    print(syn_data)
     
     seq_len = syn_data.values.shape[1]
     

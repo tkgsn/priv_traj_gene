@@ -174,8 +174,7 @@ class TransGenerator(Transformer):
 #                 sample[j, self.window_size+i] = np.random.choice(self.n_locations, p=prob)
         return sample[:,self.window_size:]
     
-    
-    def forward(self, x):
+    def forward_without_softmax(self, x):
         cls_array = torch.tensor([self.cls_index]*(len(x))).reshape(-1,1).to(next(self.parameters()).device)
         x = torch.concat([x, cls_array], dim=1)
 #         mask = torch.ones(x.shape).to(next(self.parameters()).device)
@@ -183,6 +182,10 @@ class TransGenerator(Transformer):
         mask = None
 #         print(mask)
         x = super().forward(x, mask=mask)[:,-1,:self.n_locations]
+    
+    def forward(self, x):
+        x = self.forward_without_softmax(x)
+        
         return x
 #     def predict(self, x, predict_places):
 #         x = self(x)

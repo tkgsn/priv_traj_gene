@@ -102,15 +102,19 @@ class Transformer(nn.Module):
         self.norm = nn.LayerNorm(embed_size)
         self.linear = nn.Linear(embed_size, n_embeddings, bias=False)
                 
-    
-    def forward(self, x, mask=None):
+            
+    def forward_without_softmax(self, x, mask=None):
         x = self.embeddings(x)
         x = x + self.pe(x)
         for encoder in self.encoders:
             x = encoder(x, mask=mask)
         x = self.norm(x)
         x = self.linear(x)
-#         x = F.log_softmax(x, dim=-1)
+        return x
+
+    def forward(self, x, mask=None):
+        x = self.forward_without_softmax(x)
+        x = F.log_softmax(x, dim=-1)
         return x
 
 # Positional Embedding
@@ -205,9 +209,6 @@ class TransGenerator(Transformer):
         real = self.data[:, i]
         multiplier = np.zeros(self.n_locations)
         for v in real:
-#             if self.sum == True:
-#                 multiplier[v] += 1
-#             else:
             if v >= self.n_locations:
                 continue
             multiplier[v] = 1
@@ -231,12 +232,11 @@ class TransGenerator(Transformer):
         return sample[:,self.window_size:]
     
     
-    def forward(self, x):
+    def forward_without_softmax(self, x):
         cls_array = torch.tensor([self.cls_index]*(len(x))).reshape(-1,1).to(next(self.parameters()).device)
         x = torch.concat([x, cls_array], dim=1)
-        x = super().forward(x)[:,-1,:self.n_locations]
+        x = super().forward_without_softmax(x)[:,-1,:self.n_locations]
         return x
-
     
     
 class TransGeneratorWithAux(TransGenerator):
@@ -274,9 +274,8 @@ class TransGeneratorWithAux(TransGenerator):
         mat2 = torch.sigmoid(self.linear_M2_2(mat2))
         mat2 = F.normalize(mat2)
         
-        x = super().forward(x)
+        x = super().forward_without_softmax(x)
         x = x + torch.mul(x,mat1) + torch.mul(x,mat2)
-#         x = x + torch.mul(x,mat1)
         x = F.log_softmax(x, dim=-1)
         return x
     
