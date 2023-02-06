@@ -152,7 +152,7 @@ def train(generator, discriminator, dataset, batch_size, save_name, n_epochs, ge
     real_start[:,0] = torch.tensor([generator.start_index]*len(real_data))
     real_start[:,generator.window_size] = torch.tensor(real_data[:, 0])
     
-    save_path = pathlib.Path(f"/data/results/{dataset})").parent / f"{save_name}"
+    save_path = (get_datadir() / f"results/{dataset}").parent / f"{save_name}"
     save_path.mkdir(exist_ok=True, parents=True)
 
 #     logger = get_workspace_logger(save_path)
@@ -286,8 +286,8 @@ def make_dis_data_iter(real_data, fake_data, kwargs={}):
                 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cuda_number',  default=2, type=int)
-    parser.add_argument('--cuda_number2',  default=2, type=int)
+    parser.add_argument('--cuda_number',  default=0, type=int)
+    parser.add_argument('--cuda_number2',  default=0, type=int)
     parser.add_argument('--resume', default=0, type=int)
     parser.add_argument('--dloss_alpha', default='0', type=float)
     parser.add_argument('--dataset', default='test', type=str)
