@@ -14,7 +14,7 @@ from sklearn.metrics import roc_auc_score
 
 from my_utils import load_latlon_range, make_gps, load_M1, load_M2, get_datadir, load_dataset, generate_samples, get_maxdistance
 from dataset import RealFakeDataset
-from models import TransGenerator, Discriminator
+from models import TransGenerator_DP, Discriminator
 from evaluation import evaluation
 from rollout import Rollout
 from loss import GANLoss
@@ -110,7 +110,7 @@ if __name__ == "__main__":
     args.window_size = dataset.window_size
     n_vocabs = len(dataset.vocab)
 
-    generator = TransGenerator(n_vocabs, args.window_size, dataset.seq_len, dataset.START_IDX, dataset.MASK_IDX, dataset.CLS_IDX, args.generator_embedding_dim).cuda(args.cuda_number)
+    generator = TransGenerator_DP(n_vocabs, args.window_size, dataset.seq_len, dataset.START_IDX, dataset.MASK_IDX, dataset.CLS_IDX, args.generator_embedding_dim).cuda(args.cuda_number)
     generator.real = False
     
     train(generator, dataset, args.save_name, args.n_epochs, args.batch_size, args.lr)

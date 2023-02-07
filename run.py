@@ -12,12 +12,13 @@ import pandas as pd
 from sklearn.metrics import roc_auc_score
 
 
-from my_utils import load_latlon_range, make_gps, load_M1, load_M2, get_datadir, load_dataset, generate_samples, get_maxdistance
+from my_utils import load_latlon_range, make_gps, load_M1, load_M2, get_datadir, load_dataset, get_maxdistance
 from dataset import RealFakeDataset
-from models import TransGeneratorWithAux, Discriminator
+from models import TransGeneratorWithAux, TimeTransGeneratorWithAux, Discriminator, make_sample, GRUNet, Transformer
 from evaluation import evaluation
 from rollout import Rollout
 from loss import GANLoss
+from my_utils import EarlyStopping
 
 
 def pretrain_generator(dataset, generator, save_name, batch_size, n_epochs, generator_lr=2e-3):
@@ -36,17 +37,24 @@ def pretrain_generator(dataset, generator, save_name, batch_size, n_epochs, gene
     
     print_epoch = 10
     generator.train()
+    
+    early_stopping = EarlyStopping(patience=20, verbose=True)
+
 
     print(f"save model to {save_path}")
     for epoch in tqdm.tqdm(range(n_epochs)):
+        loss_value = 0
         for batch in data_loader:
 #             print(batch)
             input = batch['input'].reshape(len(batch['input']),-1)
             target = batch['target'].cuda(cuda_number, non_blocking=True).reshape(-1)
 
             input = input.cuda(cuda_number, non_blocking=True).cuda(cuda_number, non_blocking=True)
+#             print(input)
+#             print(target)
             
             output = generator(input)
+#             print(torch.exp(output))
             output_v = output.view(-1,output.shape[-1])
             
             loss = loss_model(output_v, target)
@@ -56,6 +64,12 @@ def pretrain_generator(dataset, generator, save_name, batch_size, n_epochs, gene
             optimizer.step()
             grad_norm = round(generator.embeddings.weight.grad.abs().sum().item(),3)
             optimizer.zero_grad()
+            
+            loss_value += loss.item()
+  
+        early_stopping(loss_value / (len(data_loader)), generator)
+        if early_stopping.early_stop:
+            break
 
             #print step
         if epoch % print_epoch == 0:
@@ -64,14 +78,19 @@ def pretrain_generator(dataset, generator, save_name, batch_size, n_epochs, gene
                   ' | delta w:', grad_norm)
             
             generated_data_path = save_path/f"gene.csv"
-            real_start = generator.make_initial_data(len(dataset))
-            real_start[:,generator.window_size] = torch.tensor(dataset.data[:, 0])
+#             real_start = generator.make_initial_data(len(dataset))
+#             real_start[:,generator.window_size] = torch.tensor(dataset.data[:, 0])
             print(f"generate to {generated_data_path}")
-            generate_samples(generator, batch_size, dataset.seq_len, len(dataset), generated_data_path, real_start)
+#             generate_samples(generator, batch_size, dataset.seq_len, len(dataset), generated_data_path, real_start)
+            n_sample = len(dataset)
+            samples = make_sample(batch_size, generator, n_sample, dataset)
+            df = pd.DataFrame(samples).to_csv(generated_data_path, header=None, index=None)
+        
             evaluation(str(dataset), save_name, "gene.csv", f"{save_name}_pretrain_{epoch}")
             torch.save(generator.state_dict(), save_path / f"pre_trained_generator_{epoch}.pth")
 
     torch.save(generator.state_dict(), save_path / f"pre_trained_generator.pth")
+#     torch.save()
 
 def pretrain_discriminator(dataset, discriminator, generator, save_name, batch_size, n_epochs):
 
@@ -303,6 +322,11 @@ if __name__ == "__main__":
     parser.add_argument('--save_name', default="", type=str)
     parser.add_argument('--generator_lr', default=1e-4, type=float)
     parser.add_argument('--discriminator_lr', default=1e-5, type=float)
+    parser.add_argument('--without_M1', action='store_true')
+    parser.add_argument('--without_M2', action='store_true')
+    parser.add_argument('--without_time', action='store_true')
+    parser.add_argument('--gru', action='store_true')
+    parser.add_argument('--transformer', action='store_true')
     
     args = parser.parse_args()
     
@@ -327,14 +351,43 @@ if __name__ == "__main__":
     
     print("window size:", args.window_size)
     
-    M1 = load_M1(dataset)
-    M2 = load_M2(dataset)
+    if args.without_M1:
+        M1 = None
+    else:
+        M1 = load_M1(dataset)
+    
+    if args.without_M2:
+        M2 = None
+    else:
+        M2 = load_M2(dataset)
     
     print(M1)
     print(M2)
-    generator = TransGeneratorWithAux(n_vocabs, args.window_size, dataset.seq_len, dataset.START_IDX, dataset.MASK_IDX, dataset.CLS_IDX, args.generator_embedding_dim, M1, M2).cuda(args.cuda_number)
-#     generator = TransGeneratorWithAux(n_vocabs, args.window_size, dataset.seq_len, dataset.START_IDX, dataset.MASK_IDX, dataset.CLS_IDX, args.generator_embedding_dim, M1, M1).cuda(args.cuda_number)
+    
+    if args.without_time:
+        print("without time embedding")
+        generator = TransGeneratorWithAux(n_vocabs, args.window_size, dataset.seq_len, dataset.START_IDX, dataset.MASK_IDX, dataset.CLS_IDX, args.generator_embedding_dim, M1, M2).cuda(args.cuda_number)
+    else:
+        generator = TimeTransGeneratorWithAux(n_vocabs, args.window_size, dataset.seq_len, dataset.START_IDX, dataset.MASK_IDX, dataset.CLS_IDX, args.generator_embedding_dim, M1, M2).cuda(args.cuda_number)
     generator.real = False
+    
+    if args.gru:
+        print("USE GRU")
+        input_dim = dataset.n_locations+1
+        output_dim = dataset.n_locations
+        hidden_dim = 256
+        n_layers = 2
+        generator = GRUNet(input_dim, hidden_dim, output_dim, n_layers).cuda(args.cuda_number)
+        
+    if args.transformer:
+        print("USE TRANSFORMER")
+        embed_size = args.generator_embedding_dim
+        inner_ff_size = embed_size*4
+        n_heads = 8
+        n_code = 8
+        generator = Transformer(n_code, n_heads, embed_size, inner_ff_size, n_vocabs, dataset.n_locations, dataset.seq_len, dataset.CLS_IDX, 0.1).cuda(args.cuda_number)
+        
+    
     discriminator = Discriminator(dataset.seq_len, total_locations=n_vocabs, embedding_dim=args.discriminator_embedding_dim).cuda(args.cuda_number2)
     
 
@@ -344,7 +397,8 @@ if __name__ == "__main__":
         generator.load_state_dict(torch.load(save_path / f'trained_gen_{args.resume}.pth'))
         discriminator.load_state_dict(torch.load(save_path / f'trained_dis_{args.resume}.pth'))
     else:
-        if (save_path / 'pre_trained_generator.pth').exists():
+#         if (save_path / 'pre_trained_generator.pth').exists():
+        if False:
             print("skip pretraining generator")
             generator.load_state_dict(torch.load(save_path / f'pre_trained_generator.pth'))
             print(f"loaded from {save_path / 'pre_trained_generator.pth'}")

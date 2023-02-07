@@ -38,7 +38,8 @@ class TrajectoryDataset(Dataset):
         dataset = self
         
         
-        start_position = np.random.choice(range(1,dataset.seq_len))
+        start_position = np.random.choice(range(0,dataset.seq_len))
+#         print(start_position)
         s = dataset.padded_data[index, start_position:start_position+dataset.window_size]
         target = dataset.padded_data[index, start_position+dataset.window_size]
 
