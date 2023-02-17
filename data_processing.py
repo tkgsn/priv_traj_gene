@@ -99,7 +99,7 @@ if __name__ == "__main__":
             split_indices = split(time, seq_len, start_hour, end_hour)
             dataset.append(np.array(location)[split_indices])
             
-        training_data = pd.DataFrame(dataset).to_csv(data_path / "training_data.csv", index=None)
+        training_data = pd.DataFrame(dataset).to_csv(data_path / "training_data.csv", header=None, index=None)
     else:
         training_data = pd.read_csv(data_path / "training_data.csv", header=None).values
     

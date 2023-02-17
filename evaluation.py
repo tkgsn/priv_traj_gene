@@ -17,9 +17,9 @@ import matplotlib.pyplot as plt
 def p_r(trajectories, vocab_size):
     data = trajectories.astype(int)
     data = data.values.reshape(-1)
-    p_r = np.bincount(data, minlength=vocab_size)
+    p_r = np.bincount(data, minlength=vocab_size)[:vocab_size]
     p_r = p_r / p_r.sum()
-    return p_r[:vocab_size]
+    return p_r
 
 def construct_prob_from_r(target, trajectories, vocab_size, traj_length, threshold=100):
     trajectories = trajectories.loc[:,:traj_length-1]
@@ -32,7 +32,8 @@ def construct_prob_from_r(target, trajectories, vocab_size, traj_length, thresho
     for x, y in zip(xs, ys):
         if x == traj_length-1:
             continue
-        probs[trajectories.loc[y, x+1]] += 1
+        if trajectories.loc[y, x+1] <= vocab_size:
+            probs[trajectories.loc[y, x+1]] += 1
         
     probs[target] = 0
     
@@ -78,21 +79,36 @@ def get_distances_from_0(trajs, dataset_name):
 def get_distance_from_0(traj, dataset_name):
     X, Y = get_gps(dataset_name)
     seq_len = len(traj)
+    location_num = len(X)
     distances = []
     for i in range(seq_len):
-        dx = X[traj[0]] - X[traj[i]]
-        dy = Y[traj[0]] - Y[traj[i]]
-        distances.append(np.sqrt(dx**2 + dy**2))
+        # if (traj[0] >= len(X)) or (traj[i] >= len(X)):
+        #     distances.append(0)
+        # else:
+        #     dx = X[traj[0]] - X[traj[i]]
+        #     dy = Y[traj[0]] - Y[traj[i]]
+        #     distances.append(np.sqrt(dx**2 + dy**2))
+        distances.append(get_distance(X, Y, traj[0], traj[i]))
     return distances
+
+def get_distance(X, Y, state_0, state_1):
+    if (state_0 >= len(X)) or (state_1 >= len(X)):
+        # print("FIND OUTSIDE LOCATION")
+        return 0
     
+    dx = X[state_0] - X[state_1]
+    dy = Y[state_0] - Y[state_1]
+    return np.sqrt(dx**2 + dy**2)
+
 def get_distances(trajs, dataset_name):
     X, Y = get_gps(dataset_name)
     distances = []
     for traj in trajs:
         for i in range(len(traj) - 1):
-            dx = X[traj[i]] - X[traj[i + 1]]
-            dy = Y[traj[i]] - Y[traj[i + 1]]
-            distances.append(np.sqrt(dx**2 + dy**2))
+            # dx = X[traj[i]] - X[traj[i + 1]]
+            # dy = Y[traj[i]] - Y[traj[i + 1]]
+            # distances.append(np.sqrt(dx**2 + dy**2))
+            distances.append(get_distance(X, Y, traj[i], traj[i+1]))
     distances = np.array(distances, dtype=float)
     return distances
 
@@ -131,6 +147,10 @@ def plot_distance_from_0(training_data, syn_data, dataset_name, vocab_size, save
     
     training_y = training_result.mean(axis=0)
     syn_y = syn_result.mean(axis=0)
+    if len(syn_y) < len(training_y):
+        syn_y = np.pad(syn_y, [0,len(training_y)-len(syn_y)], 'constant')
+    else:
+        syn_y = syn_y[:len(training_y)]
     x = range(0,len(training_y))
     
     plt.plot(x, training_y, label="real")
@@ -192,7 +212,7 @@ def plot_gradius(training_data, syn_data, dataset_name, vocab_size, save_path):
     
 def compute_p_r_r(vocab_size, syn_data, training_data):
     results = {}
-    traj_length = syn_data.values.shape[1]
+    traj_length = min([syn_data.values.shape[1], training_data.values.shape[1]])
     for j in range(vocab_size):
         syn_probs = construct_prob_from_r(j, syn_data, vocab_size, traj_length, threshold=100)
         if syn_probs is None:
@@ -227,7 +247,7 @@ def plot_hist2d(data, n_bins, vocab_size, save_path):
     counts = np.bincount(data.values.reshape(-1), minlength=vocab_size)
     hist2d = make_hist_2d(counts, n_bins)
 
-    ax = sns.heatmap(hist2d.T, cmap=sns.color_palette("light:b", as_cmap=True), vmax=30)
+    ax = sns.heatmap(hist2d.T/hist2d.sum(), cmap=sns.color_palette("light:b", as_cmap=True), vmax=0.01)
     ax.invert_yaxis()
     plt.savefig(save_path)
     plt.clf()
@@ -256,7 +276,8 @@ def evaluation(dataset_name, save_name, syn_data_name, name):
     print("syn", syn_data_path)
     print(syn_data)
     
-    seq_len = syn_data.values.shape[1]
+    seq_len = min([syn_data.values.shape[1], training_data.values.shape[1]])
+    print("seq_len", seq_len)
     
     plot_hist2d(training_data, n_bins, vocab_size, save_path / f"{name}_pr_training.png")
     plot_hist2d(syn_data, n_bins, vocab_size, save_path / f"{name}_pr_syn.png")
@@ -266,6 +287,7 @@ def evaluation(dataset_name, save_name, syn_data_name, name):
     print("distance_from_0", results["distance_from_0"][1])
     
     results["distances"] = plot_distance(training_data, syn_data, dataset_name, vocab_size, save_path / f"{name}_distance.png")
+    
     results["durations"] = plot_duration(training_data, syn_data, dataset_name, vocab_size, save_path / f"{name}_distances.png")
     results["gradius"] = plot_duration(training_data, syn_data, dataset_name, vocab_size, save_path / f"{name}_gradius.png")
     

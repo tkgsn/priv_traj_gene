@@ -8,6 +8,7 @@ import bisect
 import numpy as np
 from torch.autograd import Variable
 import pandas as pd
+from opacus.layers.dp_rnn import DPGRU
 
 def attention(q, k, v, mask = None, dropout = None):
     scores = q.matmul(k.transpose(-2, -1))
@@ -124,7 +125,7 @@ class Transformer(nn.Module):
         return x
     
 class TimeTransformer(nn.Module):
-    def __init__(self, n_code, n_heads, embed_size, inner_ff_size, n_embeddings, seq_len, dropout=.1):
+    def __init__(self, n_code, n_heads, embed_size, inner_ff_size, n_embeddings, n_locations, seq_len, start_index, dropout=.1):
         super().__init__()
         
         #model input
@@ -140,22 +141,22 @@ class TimeTransformer(nn.Module):
         
         #language model
         self.norm = nn.LayerNorm(embed_size)
-        self.linear = nn.Linear(embed_size, n_embeddings, bias=False)
+        self.linear = nn.Linear(embed_size, n_locations, bias=False)
+        
+        self.start_index = start_index
+        self.seq_len = seq_len
                 
             
     def make_time_data(self, x):
         x = x.detach().cpu()
-#         print(x)
+        # print(x)
         start_numbers = [sum(v) for v in x==self.start_index]
-#         print(start_numbers)
-        
-        times = [torch.tensor(range(self.seq_len-v)) for v in start_numbers]
-#         print(times)
-        times = torch.cat(times)
-#         print(times)
+    #         print(start_numbers)
+        # times = [torch.tensor(range(self.seq_len-v)) for v in start_numbers]
+        times = [torch.tensor(range(self.seq_len-v-1)) for v in start_numbers]
+        times = torch.cat(times).long()
         x[x!=self.start_index] = times
         x[x==self.start_index] = self.seq_len
-#         print(x)
         return x
     
     def forward_without_softmax(self, x, mask=None):
@@ -171,7 +172,7 @@ class TimeTransformer(nn.Module):
 
     def forward(self, x, mask=None):
         x = self.forward_without_softmax(x)
-        x = F.log_softmax(x, dim=-1)
+        x = F.log_softmax(x, dim=-1)[:,-1,:]
         return x
 
 # Positional Embedding
@@ -201,6 +202,31 @@ class GRUNet(nn.Module):
         self.n_layers = n_layers
         
         self.gru = nn.GRU(embed_size, hidden_dim, n_layers, batch_first=True, dropout=drop_prob)
+        self.fc = nn.Linear(hidden_dim, output_dim)
+        self.relu = nn.ReLU()
+        
+#     def forward(self, x, h):
+    def forward(self, x):
+        h = self.init_hidden(x.shape[0])
+        x = self.embeddings(x)
+        out, _ = self.gru(x, h)
+        out = self.fc(self.relu(out[:,-1]))
+        return F.log_softmax(out, dim=-1)
+    
+    def init_hidden(self, batch_size):
+        weight = next(self.parameters()).data
+        hidden = weight.new(self.n_layers, batch_size, self.hidden_dim).zero_().to(next(self.parameters()).device)
+        return hidden
+    
+class DPGRUNet(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim, n_layers, drop_prob=0.1):
+        super(DPGRUNet, self).__init__()
+        embed_size = 128
+        self.embeddings = nn.Embedding(input_dim, embed_size)
+        self.hidden_dim = hidden_dim
+        self.n_layers = n_layers
+        
+        self.gru = DPGRU(embed_size, hidden_dim, n_layers, batch_first=True, dropout=drop_prob)
         self.fc = nn.Linear(hidden_dim, output_dim)
         self.relu = nn.ReLU()
         
@@ -304,8 +330,8 @@ def make_frame_data(n_sample, seq_len, start_index):
     return frame_data
 
 def recurrent_step(generator, seq_len, window_size, n_locations, start_time, data, start_index):
-        
     for i in range(start_time, seq_len):
+        # print(data)
         step(generator, i, window_size, data, n_locations, start_index)
     return data
 
@@ -345,23 +371,23 @@ def predict_next_location_on_all_stages(self, x, start_time=0):
     return torch.cat(probs).reshape(x.shape[0]*self.window_size, -1)
 
     
-def make_generator(class_name):
+# def make_generator(class_name):
     
-    class TransGenerator(class_name):
+#     class TransGenerator(class_name):
 
-        def __init__(self, n_vocabs, window_size, seq_len, start_index, mask_index, cls_index, generator_embedding_dim):
-            embed_size = generator_embedding_dim
-            inner_ff_size = embed_size * 4
-            n_heads = 8
-            n_code = 8
-            super().__init__(n_code, n_heads, embed_size, inner_ff_size, n_vocabs, window_size+1, 0.1)
-            self.start_index = start_index 
-            self.mask_index = mask_index
-            self.cls_index = cls_index
-            self.seq_len = seq_len
-            self.n_vocabs = n_vocabs
-            self.n_locations = n_vocabs - 5
-            self.window_size = window_size
+#         def __init__(self, n_vocabs, window_size, seq_len, start_index, mask_index, cls_index, generator_embedding_dim):
+#             embed_size = generator_embedding_dim
+#             inner_ff_size = embed_size * 4
+#             n_heads = 8
+#             n_code = 8
+#             super().__init__(n_code, n_heads, embed_size, inner_ff_size, n_vocabs, window_size+1, 0.1)
+#             self.start_index = start_index 
+#             self.mask_index = mask_index
+#             self.cls_index = cls_index
+#             self.seq_len = seq_len
+#             self.n_vocabs = n_vocabs
+#             self.n_locations = n_vocabs - 5
+#             self.window_size = window_size
 
 #         def make_initial_data(self, n_sample, data=[]):
 
@@ -464,7 +490,7 @@ def add_aux(class_name):
     return TransGeneratorWithAux
 
 
-TransGenerator = make_generator(Transformer)
-TimeTransGenerator = make_generator(TimeTransformer)
-TransGeneratorWithAux = add_aux(TransGenerator)
-TimeTransGeneratorWithAux = add_aux(TimeTransGenerator)
+# TransGenerator = make_generator(Transformer)
+# TimeTransGenerator = make_generator(TimeTransformer)
+TransformerWithAux = add_aux(Transformer)
+TimeTransformerWithAux = add_aux(TimeTransformer)

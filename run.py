@@ -14,7 +14,7 @@ from sklearn.metrics import roc_auc_score
 
 from my_utils import load_latlon_range, make_gps, load_M1, load_M2, get_datadir, load_dataset, get_maxdistance
 from dataset import RealFakeDataset
-from models import TransGeneratorWithAux, TimeTransGeneratorWithAux, Discriminator, make_sample, GRUNet, Transformer
+from models import Discriminator, make_sample, GRUNet, Transformer, TimeTransformer
 from evaluation import evaluation
 from rollout import Rollout
 from loss import GANLoss
@@ -50,12 +50,13 @@ def pretrain_generator(dataset, generator, save_name, batch_size, n_epochs, gene
             target = batch['target'].cuda(cuda_number, non_blocking=True).reshape(-1)
 
             input = input.cuda(cuda_number, non_blocking=True).cuda(cuda_number, non_blocking=True)
-#             print(input)
-#             print(target)
+            # print(input)
+            # print(target)
             
             output = generator(input)
-#             print(torch.exp(output))
+            # print(torch.exp(output).shape)
             output_v = output.view(-1,output.shape[-1])
+    
             
             loss = loss_model(output_v, target)
             loss.backward()
@@ -327,6 +328,7 @@ if __name__ == "__main__":
     parser.add_argument('--without_time', action='store_true')
     parser.add_argument('--gru', action='store_true')
     parser.add_argument('--transformer', action='store_true')
+    parser.add_argument('--time_transformer', action='store_true')
     
     args = parser.parse_args()
     
@@ -364,12 +366,6 @@ if __name__ == "__main__":
     print(M1)
     print(M2)
     
-    if args.without_time:
-        print("without time embedding")
-        generator = TransGeneratorWithAux(n_vocabs, args.window_size, dataset.seq_len, dataset.START_IDX, dataset.MASK_IDX, dataset.CLS_IDX, args.generator_embedding_dim, M1, M2).cuda(args.cuda_number)
-    else:
-        generator = TimeTransGeneratorWithAux(n_vocabs, args.window_size, dataset.seq_len, dataset.START_IDX, dataset.MASK_IDX, dataset.CLS_IDX, args.generator_embedding_dim, M1, M2).cuda(args.cuda_number)
-    generator.real = False
     
     if args.gru:
         print("USE GRU")
@@ -379,13 +375,28 @@ if __name__ == "__main__":
         n_layers = 2
         generator = GRUNet(input_dim, hidden_dim, output_dim, n_layers).cuda(args.cuda_number)
         
-    if args.transformer:
+    elif args.transformer:
         print("USE TRANSFORMER")
         embed_size = args.generator_embedding_dim
         inner_ff_size = embed_size*4
         n_heads = 8
         n_code = 8
         generator = Transformer(n_code, n_heads, embed_size, inner_ff_size, n_vocabs, dataset.n_locations, dataset.seq_len, dataset.CLS_IDX, 0.1).cuda(args.cuda_number)
+        
+    elif args.time_transformer:
+        print("USE TIME TRANSFORMER")
+        embed_size = args.generator_embedding_dim
+        inner_ff_size = embed_size*4
+        n_heads = 8
+        n_code = 8
+        generator = TimeTransformer(n_code, n_heads, embed_size, inner_ff_size, n_vocabs, dataset.n_locations, dataset.seq_len, dataset.START_IDX, 0.1).cuda(args.cuda_number)
+        
+    elif args.without_time:
+        print("without time embedding")
+        generator = TransGeneratorWithAux(n_vocabs, args.window_size, dataset.seq_len, dataset.START_IDX, dataset.MASK_IDX, dataset.CLS_IDX, args.generator_embedding_dim, M1, M2).cuda(args.cuda_number)
+    else:
+        generator = TimeTransGeneratorWithAux(n_vocabs, args.window_size, dataset.seq_len, dataset.START_IDX, dataset.MASK_IDX, dataset.CLS_IDX, args.generator_embedding_dim, M1, M2).cuda(args.cuda_number)
+    generator.real = False
         
     
     discriminator = Discriminator(dataset.seq_len, total_locations=n_vocabs, embedding_dim=args.discriminator_embedding_dim).cuda(args.cuda_number2)
