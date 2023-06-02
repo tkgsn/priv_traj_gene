@@ -14,8 +14,8 @@ def attention(q, k, v, mask = None, dropout = None):
     scores = q.matmul(k.transpose(-2, -1))
     scores /= math.sqrt(q.shape[-1])
     
+    scores = scores if mask is None else scores.masked_fill(mask == 0, -1e10)
 
-    scores = scores if mask is None else scores.masked_fill(mask == 0, -1e3)
     
     scores = F.softmax(scores, dim = -1)
     scores = dropout(scores) if dropout is not None else scores
@@ -86,14 +86,14 @@ class EncoderLayer(nn.Module):
         return x
 
 class Transformer(nn.Module):
-    def __init__(self, n_code, n_heads, embed_size, inner_ff_size, n_embeddings, n_locations, seq_len, cls_index, dropout=.1):
+    def __init__(self, n_code, n_heads, embed_size, inner_ff_size, n_embeddings, output_dim, seq_len, cls_index, dropout=.1):
         super().__init__()
 
         #model input
         self.embeddings = nn.Embedding(n_embeddings, embed_size)
         self.pe = PositionalEmbedding(embed_size, seq_len)
         self.n_embeddings = n_embeddings
-        self.n_locations = n_locations
+        self.output_dim = output_dim
         
         #backbone
         encoders = []
@@ -103,7 +103,7 @@ class Transformer(nn.Module):
         
         #language model
         self.norm = nn.LayerNorm(embed_size)
-        self.linear = nn.Linear(embed_size, n_locations, bias=False)
+        self.linear = nn.Linear(embed_size, output_dim, bias=False)
         self.cls_index = cls_index
                 
             
@@ -112,6 +112,7 @@ class Transformer(nn.Module):
         x = torch.cat([x, cls_array], dim=1)
         x = self.embeddings(x)
         x = x + self.pe(x)
+        # mask = torch.ones((x.shape[1], x.shape[1])).tril(diagonal=0).to(next(self.parameters()).device)
         for encoder in self.encoders:
             x = encoder(x, mask=mask)
         x = self.norm(x)
@@ -123,7 +124,54 @@ class Transformer(nn.Module):
         x = self.forward_without_softmax(x)
         x = F.log_softmax(x, dim=-1)[:,-1,:]
         return x
+
+    def forward_log_prob(self, x):
+        return self(x) 
+
+
+class SelfAttentionTransformer(nn.Module):
+    def __init__(self, n_code, n_heads, embed_size, inner_ff_size, n_embeddings, output_dim, seq_len, dropout=.1):
+        super().__init__()
+
+        #model input
+        self.embeddings = nn.Embedding(n_embeddings, embed_size)
+        self.pe = PositionalEmbedding(embed_size, seq_len)
+        self.n_embeddings = n_embeddings
+        self.output_dim = output_dim
+        
+        #backbone
+        encoders = []
+        for i in range(n_code):
+            encoders += [EncoderLayer(n_heads, embed_size, inner_ff_size, dropout)]
+        self.encoders = nn.ModuleList(encoders)
+        
+        #language model
+        self.norm = nn.LayerNorm(embed_size)
+        self.linear = nn.Linear(embed_size, output_dim, bias=False)
+            
+    def forward_without_softmax(self, x):
+        x = self.embeddings(x)
+        x = x + self.pe(x)
+        mask = torch.ones((x.shape[1], x.shape[1])).tril(diagonal=0).to(next(self.parameters()).device)
+        # mask = None
+        for encoder in self.encoders:
+            x = encoder(x, mask=mask)
+        x = self.norm(x)
+        x = self.linear(x)
+        return x
+            
+    def forward(self, x, mask=None):
+        # print("input", x)
+        x = self.forward_without_softmax(x)
+        x = F.log_softmax(x, dim=-1)
+        return x
+
+    def forward_log_prob(self, x):
+        x = self.forward_without_softmax(x)
+        x = F.log_softmax(x, dim=-1)
+        return x[:,-1,:]        
     
+
 class TimeTransformer(nn.Module):
     def __init__(self, n_code, n_heads, embed_size, inner_ff_size, n_embeddings, n_locations, seq_len, start_index, dropout=.1):
         super().__init__()
@@ -194,9 +242,8 @@ class PositionalEmbedding(nn.Module):
     
     
 class GRUNet(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim, n_layers, drop_prob=0.1):
+    def __init__(self, input_dim, hidden_dim, output_dim, n_layers, embed_size, drop_prob=0.1):
         super(GRUNet, self).__init__()
-        embed_size = 128
         self.embeddings = nn.Embedding(input_dim, embed_size)
         self.hidden_dim = hidden_dim
         self.n_layers = n_layers
@@ -210,18 +257,159 @@ class GRUNet(nn.Module):
         h = self.init_hidden(x.shape[0])
         x = self.embeddings(x)
         out, _ = self.gru(x, h)
-        out = self.fc(self.relu(out[:,-1]))
+        # out = out.reshape(-1, out.shape[-1])
+        out = self.fc(self.relu(out))
         return F.log_softmax(out, dim=-1)
+
+    def forward_log_prob(self, x):
+        return self(x) 
     
     def init_hidden(self, batch_size):
         weight = next(self.parameters()).data
         hidden = weight.new(self.n_layers, batch_size, self.hidden_dim).zero_().to(next(self.parameters()).device)
         return hidden
+
+# extend GRUNet so that it also outputs time information
+class TimeGRUNet(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim, n_layers, embed_size, drop_prob=0.1):
+        super(TimeGRUNet, self).__init__()
+        self.embeddings = nn.Embedding(input_dim, embed_size)
+        self.hidden_dim = hidden_dim
+        self.n_layers = n_layers
+        
+        self.gru = DPGRU(embed_size+1, hidden_dim, n_layers, batch_first=True, dropout=drop_prob)
+        # output_dim + 1 because we also want to predict the time
+        self.fc = nn.Linear(hidden_dim, output_dim+1)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        locations = x[0]
+        times = x[1]
+
+        h = self.init_hidden(locations.shape[0])
+        x = self.embeddings(locations)
+
+        # concat time information
+        x = torch.cat([x, times], dim=-1)
+
+        out, _ = self.gru(x, h)
+        out = self.fc(self.relu(out))
+        location = out[:, :, :-1]
+        location = F.log_softmax(location, dim=-1)
+        time = out[:, :, -1]
+        time = torch.sigmoid(time)
+        return location, time
+
+    def forward_log_prob(self, x):
+        return self(x)
+
+    def init_hidden(self, batch_size):
+        weight = next(self.parameters()).data
+        hidden = weight.new(self.n_layers, batch_size, self.hidden_dim).zero_().to(next(self.parameters()).device)
+        return hidden
+
+class TimeTrajTypeGRUNet(nn.Module):
+    def __init__(self, input_dim, traj_type_dim, hidden_dim, output_dim, n_layers, embed_size, drop_prob=0.1):
+        super(TimeTrajTypeGRUNet, self).__init__()
+        self.traj_type_embedding = nn.Embedding(traj_type_dim, hidden_dim*n_layers)
+        # self.traj_type_embedding = nn.Embedding(traj_type_dim, 10)
+        # self.fc_traj_type = nn.Linear(10, hidden_dim*n_layers)
+        self.embeddings = nn.Embedding(input_dim, embed_size)
+        self.hidden_dim = hidden_dim
+        self.n_layers = n_layers
+        
+        self.gru = DPGRU(embed_size+1, hidden_dim, n_layers, batch_first=True, dropout=drop_prob)
+        # output_dim + 1 because we also want to predict the time
+        self.fc = nn.Linear(hidden_dim, output_dim+1)
+        self.relu = nn.ReLU()
+
+    def forward(self, x, labels):
+        locations = x[0]
+        times = x[1]
+
+        h = self.init_hidden(labels)
+        x = self.embeddings(locations)
+        
+        # concat time information
+        x = torch.cat([x, times], dim=-1)
+
+        out, _ = self.gru(x, h)
+        out = self.fc(self.relu(out))
+        location = out[:, :, :-1]
+        location = F.log_softmax(location, dim=-1)
+        time = out[:, :, -1]
+        time = F.sigmoid(time)
+        return location, time
+
+    def forward_log_prob(self, x):
+        return self(x)
+
+    # def init_hidden(self, batch_size):
+    #     batch_size = len(batch_size)
+    #     weight = next(self.parameters()).data
+    #     hidden = weight.new(self.n_layers, batch_size, self.hidden_dim).zero_().to(next(self.parameters()).device)
+    #     return hidden
+
+    def init_hidden(self, labels):
+        hidden = self.traj_type_embedding(labels).view(self.n_layers, -1, self.hidden_dim)
+        # hidden = self.fc_traj_type(hidden).view(self.n_layers, -1, self.hidden_dim)
+        return hidden
+
+
+class MetaTimeTrajTypeGRUNet(nn.Module):
+    def __init__(self, input_dim, traj_type_dim, hidden_dim, output_dim, n_layers, embed_size, drop_prob=0.1):
+        super(MetaTimeTrajTypeGRUNet, self).__init__()
+        self.traj_type_embedding = nn.Embedding(traj_type_dim, hidden_dim*n_layers)
+        # self.traj_type_embedding = nn.Embedding(traj_type_dim, 10)
+        # self.fc_traj_type = nn.Linear(10, hidden_dim*n_layers)
+        self.embeddings = nn.Embedding(input_dim, embed_size)
+        self.hidden_dim = hidden_dim
+        self.n_layers = n_layers
+        
+        self.gru = DPGRU(embed_size+1, hidden_dim, n_layers, batch_first=True, dropout=drop_prob)
+        # output_dim + 1 because we also want to predict the time
+        self.fc = nn.Linear(hidden_dim, output_dim+1)
+        self.relu = nn.ReLU()
+
+    def forward(self, x, labels, params=None):
+        if params is not None:
+            for name, param in params.items():
+                self.state_dict()[name].copy_(param)
+
+        locations = x[0]
+        times = x[1]
+
+        h = self.init_hidden(labels)
+        x = self.embeddings(locations)
+        
+        # concat time information
+        x = torch.cat([x, times], dim=-1)
+
+        out, _ = self.gru(x, h)
+        out = self.fc(self.relu(out))
+        location = out[:, :, :-1]
+        location = F.log_softmax(location, dim=-1)
+        time = out[:, :, -1]
+        time = F.sigmoid(time)
+        return location, time
+
+    def forward_log_prob(self, x):
+        return self(x)
+
+    # def init_hidden(self, batch_size):
+    #     batch_size = len(batch_size)
+    #     weight = next(self.parameters()).data
+    #     hidden = weight.new(self.n_layers, batch_size, self.hidden_dim).zero_().to(next(self.parameters()).device)
+    #     return hidden
+
+    def init_hidden(self, labels):
+        hidden = self.traj_type_embedding(labels).view(self.n_layers, -1, self.hidden_dim)
+        # hidden = self.fc_traj_type(hidden).view(self.n_layers, -1, self.hidden_dim)
+        return hidden
     
 class DPGRUNet(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim, n_layers, drop_prob=0.1):
+    def __init__(self, input_dim, hidden_dim, output_dim, n_layers, embed_size, drop_prob=0.1):
         super(DPGRUNet, self).__init__()
-        embed_size = 128
         self.embeddings = nn.Embedding(input_dim, embed_size)
         self.hidden_dim = hidden_dim
         self.n_layers = n_layers
@@ -235,8 +423,12 @@ class DPGRUNet(nn.Module):
         h = self.init_hidden(x.shape[0])
         x = self.embeddings(x)
         out, _ = self.gru(x, h)
-        out = self.fc(self.relu(out[:,-1]))
+        # out = out.reshape(-1, out.shape[-1])
+        out = self.fc(self.relu(out))
         return F.log_softmax(out, dim=-1)
+
+    def forward_log_prob(self, x):
+        return self(x) 
     
     def init_hidden(self, batch_size):
         weight = next(self.parameters()).data
@@ -288,70 +480,249 @@ class Discriminator(nn.Module):
 
 
 
-def step(generator, i, window_size, sample, n_locations, start_index):
+def step(generator, i, window_size, output_dim, sample, start_index, end_index):
 
 #     if self.real == True:
 #         self.step_from_real(i, sample)
 #         return
-    pad_num = window_size - i
-    if pad_num > 0:
-        padding_data = torch.tensor([[start_index]*pad_num]*sample.shape[0])
-        input = torch.cat([padding_data, sample], dim=1).to(next(generator.parameters()).device)[:, :window_size].long()
-    else:
-        input = sample.to(next(generator.parameters()).device)[:, i-window_size:i].long()
-        
-#     print(input)
-    probs = torch.exp(generator(input)).detach().cpu().numpy()
+    # pad_num = window_size - i
+    # if pad_num > 0:
+    #     padding_data = torch.tensor([[start_index]*pad_num]*sample.shape[0])
+    #     input = torch.cat([padding_data, sample], dim=1).to(next(generator.parameters()).device)[:, :window_size].long()
+    # else:
+        # input = sample.to(next(generator.parameters()).device)[:, i-window_size:i].long()
+    input = sample.to(next(generator.parameters()).device)[:, :i+1].long()
+    probs = torch.exp(generator.forward_log_prob(input)).detach().cpu().numpy()
+    # extract the final prediction
+    probs = probs[:,-1]
+    # indice = [input.shape[1]*i-1 for i in range(1,input.shape[0]+1)]
+    # probs = probs[indice]
+    # probs = torch.exp(generator(input)).detach().cpu().numpy()
+    probs = probs[:,:output_dim] / probs[:,:output_dim].sum(axis=1, keepdims=True)
+    # print(probs)
 
     for j, prob in enumerate(probs):
-        prob = prob / prob.sum()
-        sample[j, i] = np.random.choice(n_locations, p=prob)
+        if sample[j, i] == end_index:
+            choiced = end_index
+        else: 
+            prob = prob / prob.sum()
+            choiced = np.random.choice(output_dim, p=prob)
+        sample[j, i+1] = choiced
     return sample
 
 
-# def step_from_real(self, i, sample):
-#     input = sample.to(next(self.parameters()).device)[:, i:self.window_size+i]
-#     probs = torch.exp(self(input)).detach().cpu().numpy()
-#     real = self.data[:, i]
-#     multiplier = np.zeros(self.n_locations)
-#     for v in real:
-#         if v >= self.n_locations:
-#             continue
-#         multiplier[v] = 1
+def step_with_time(generator, i, window_size, output_dim, sample, sample_time, start_index, end_index):
 
-#     for j, prob in enumerate(probs):
-#         prob *= multiplier
-#         prob = prob / prob.sum()
-#         sample[j, self.window_size+i] = np.random.choice(self.n_locations, p=prob)
+    input = sample.to(next(generator.parameters()).device)[:, :i+1].long()
+    input_time = sample_time.to(next(generator.parameters()).device)[:, :i+1].float().reshape(-1, i+1, 1)
+    pred_location, pred_time = generator([input, input_time])
+    probs = torch.exp(pred_location).detach().cpu().numpy()
+    probs = probs[:,-1]
+    probs = probs[:,:output_dim] / probs[:,:output_dim].sum(axis=1, keepdims=True)
+
+    for j, prob in enumerate(probs):
+        if sample[j, i] == end_index:
+            choiced = end_index
+        else: 
+            prob = prob / prob.sum()
+            choiced = np.random.choice(output_dim, p=prob)
+        sample[j, i+1] = choiced
+
+    pred_time = pred_time.detach().cpu()
+    sample_time[:, i+1] = pred_time[:, -1]
+    return sample, sample_time
+
+def step_with_time_and_traj_type(generator, i, window_size, output_dim, sample, sample_time, labels, start_index, end_index, ignore_index):
+    input = sample.to(next(generator.parameters()).device)[:, :i+1].long()
+    input_time = sample_time.to(next(generator.parameters()).device)[:, :i+1].float().reshape(-1, i+1, 1)
+    labels = labels.to(next(generator.parameters()).device)
+    input[input==end_index] = ignore_index
+    pred_location, pred_time = generator([input, input_time], labels)
+    probs = torch.exp(pred_location).detach().cpu().numpy()
+    probs = probs[:,-1]
+    probs = probs[:,:output_dim] / probs[:,:output_dim].sum(axis=1, keepdims=True)
+
+    for j, prob in enumerate(probs):
+        if sample[j, i] == end_index:
+            choiced = end_index
+        else:
+            for pre_location_index in range(1,i+1):
+                pre_location = int(sample[j, pre_location_index].item())
+                if pre_location < output_dim:
+                    prob[pre_location] = 0
+            prob = prob / prob.sum()
+            choiced = np.random.choice(output_dim, p=prob)
+        sample[j, i+1] = choiced
+
+    pred_time = pred_time.detach().cpu()
+    sample_time[:, i+1] = pred_time[:, -1]
+    return sample, sample_time
+
 
 def make_frame_data(n_sample, seq_len, start_index):
-    frame_data = torch.zeros((n_sample, seq_len))
+    frame_data = torch.zeros((n_sample, seq_len+1))
     frame_data.fill_(start_index)
     return frame_data
 
-def recurrent_step(generator, seq_len, window_size, n_locations, start_time, data, start_index):
+def recurrent_step(generator, seq_len, window_size, output_dim, start_time, data, start_index, end_index):
     for i in range(start_time, seq_len):
+    # for i in range(1, seq_len):
         # print(data)
-        step(generator, i, window_size, data, n_locations, start_index)
+        step(generator, i, window_size, output_dim, data, start_index, end_index)
     return data
 
 
+def recurrent_step_with_time(generator, seq_len, window_size, output_dim, start_time, data, time_data, start_index, end_index):
+    for i in range(start_time, seq_len):
+        data, time_data = step_with_time(generator, i, window_size, output_dim, data, time_data, start_index, end_index)
+    return data, time_data
+
+
+def recurrent_step_with_time_and_traj_type(generator, seq_len, window_size, output_dim, start_time, data, time_data, labels, start_index, end_index, ignore_index, label_to_format):
+    # convert label (format) to reference
+    # reference refers to the index of the first appearance of a state
+    # if the label stands for format "010202", the reference is "010203"
+    def make_reference(label):
+        format = label_to_format[label.item()]
+        reference = {}
+        for i in range(len(format)):
+            if format[i] not in reference:
+                reference[format[i]] = i
+        return [reference[format[i]] for i in range(len(format))]
+    references = [make_reference(label) for label in labels]
+
+    for i in range(start_time, seq_len):
+        data, time_data = step_with_time_and_traj_type(generator, i, window_size, output_dim, data, time_data, labels, start_index, end_index, ignore_index)
+        # apply fix_by_label to each record
+        # print(references)
+        for index, reference in enumerate(references):
+            # if data[index][1].item() == 2978:
+            #     print(reference, len(references))
+            #     print(index, data[index], label_to_format[labels[index].item()])
+            if len(reference) <= i:
+                data[index][i+1] = end_index
+                continue
+            data[index][i+1] = data[index][reference[i]+1]
+    # for label, record in zip(labels, data):
+    #     if record[1].item() == 2978:
+    #         print(label_to_format[label.item()], record)
+    return data[:,1:], time_data
+
 def make_sample(batch_size, generator, n_sample, dataset, real_start=True):
 
-    frame_data = make_frame_data(n_sample, dataset.seq_len, dataset.START_IDX)
+    frame_data = make_frame_data(n_sample, dataset.seq_len, dataset.IGNORE_IDX)
     start_time = 0
     
     if real_start:
-        start_time = 1
+        start_time = 0
         indice = np.random.choice(range(len(dataset)), n_sample, replace=False)
-        real_data = dataset.data[indice]
-        frame_data[:,0] = torch.tensor(real_data[:,0])
-    
+        # choose real data by indice from list
+        real_data = [dataset.data[i] for i in indice]
+        frame_data[:,0] = torch.tensor([v[0] for v in real_data])
+        # frame_data[:,1] = torch.tensor(real_data[:,1])
+
     samples = []
     for i in range(int(n_sample / batch_size)):
-        sample = recurrent_step(generator, dataset.seq_len, dataset.window_size, dataset.n_locations, start_time, frame_data[i*batch_size:(i+1)*batch_size], dataset.START_IDX).cpu().detach().long().numpy()
+        batch_input = frame_data[i*batch_size:(i+1)*batch_size]
+        # print(batch_input)
+        # sample = recurrent_step(generator, dataset.seq_len, dataset.window_size, dataset.n_locations_plus_end, start_time, batch_input, dataset.START_IDX, dataset.END_IDX).cpu().detach().long().numpy()
+        sample = recurrent_step(generator, dataset.seq_len, dataset.seq_len, dataset.n_locations+1, start_time, batch_input, dataset.START_IDX, dataset.END_IDX).cpu().detach().long().numpy()
         samples.extend(sample)
-    return samples
+
+    # return np.array(samples)[:,1:]
+    # remove ignore_idx
+    generated_trajectories = []
+    for sample in samples:
+        generated_trajectories.append([v for v in sample if v != dataset.END_IDX])
+    return generated_trajectories
+
+def make_sample_with_time(batch_size, generator, n_sample, dataset, real_start=True):
+    frame_data = make_frame_data(n_sample, dataset.seq_len, dataset.IGNORE_IDX)
+    frame_data_for_time = make_frame_data(n_sample, dataset.seq_len, 0)
+    start_time = 0
+    
+    if real_start:
+        start_time = 0
+        indice = np.random.choice(range(len(dataset)), n_sample, replace=False)
+        # choose real data by indice from list
+        real_data = [dataset.data[i] for i in indice]
+        frame_data[:,0] = torch.tensor([v[0] for v in real_data])
+        # frame_data[:,1] = torch.tensor(real_data[:,1])
+
+    samples = []
+    time_samples = []
+    for i in range(int(n_sample / batch_size)):
+        batch_input = frame_data[i*batch_size:(i+1)*batch_size]
+        batch_input_for_time = frame_data_for_time[i*batch_size:(i+1)*batch_size]
+        # print(batch_input)
+        # sample = recurrent_step(generator, dataset.seq_len, dataset.window_size, dataset.n_locations_plus_end, start_time, batch_input, dataset.START_IDX, dataset.END_IDX).cpu().detach().long().numpy()
+        sample, time_sample = recurrent_step_with_time(generator, dataset.seq_len, dataset.seq_len, dataset.n_locations+1, start_time, batch_input, batch_input_for_time, dataset.START_IDX, dataset.END_IDX)
+        
+        sample = sample.cpu().detach().long().numpy()
+        time_sample = time_sample.cpu().detach().numpy()
+
+        samples.extend(sample)
+        time_samples.extend(time_sample)
+
+    # return np.array(samples)[:,1:]
+    # remove ignore_idx
+    generated_trajectories = []
+    for sample in samples:
+        generated_trajectories.append([v for v in sample if v != dataset.END_IDX])
+
+    generated_time_trajectories = []
+    for sample in time_samples:
+        generated_time_trajectories.append([v for v in sample if v != dataset.IGNORE_IDX])
+    return generated_trajectories, generated_time_trajectories
+
+def make_sample_with_time_and_traj_type(batch_size, generator, labels, dataset, label_to_format, real_start=True):
+    n_sample = len(labels)
+    frame_data = make_frame_data(n_sample, dataset.seq_len, dataset.START_IDX)
+    frame_data_for_time = make_frame_data(n_sample, dataset.seq_len, 0)
+    start_time = 0
+    
+    if real_start:
+        start_time = 0
+        indice = np.random.choice(range(len(dataset)), n_sample, replace=True)
+        # indice = range(n_sample)
+        # choose real data by indice from list
+        real_data = [dataset.data[i] for i in indice]
+        frame_data[:,0] = torch.tensor([v[0] for v in real_data])
+        # frame_data[:,1] = torch.tensor(real_data[:,1])
+
+    samples = []
+    time_samples = []
+    for i in range(int(n_sample / batch_size)):
+        batch_labels = labels[i*batch_size:(i+1)*batch_size]
+        batch_input = frame_data[i*batch_size:(i+1)*batch_size]
+        batch_input_for_time = frame_data_for_time[i*batch_size:(i+1)*batch_size]
+        # print(batch_input)
+        # sample = recurrent_step(generator, dataset.seq_len, dataset.window_size, dataset.n_locations_plus_end, start_time, batch_input, dataset.START_IDX, dataset.END_IDX).cpu().detach().long().numpy()
+        sample, time_sample = recurrent_step_with_time_and_traj_type(generator, dataset.seq_len, dataset.seq_len, dataset.n_locations, start_time, batch_input, batch_input_for_time, batch_labels, dataset.START_IDX, dataset.END_IDX, dataset.IGNORE_IDX, label_to_format)
+        
+        sample = sample.cpu().detach().long().numpy()
+        time_sample = time_sample.cpu().detach().numpy()
+
+        samples.extend(sample)
+        time_samples.extend(time_sample)
+
+    # print(samples)
+    generated_trajectories = []
+    for sample in samples:
+        generated_trajectories.append([v for v in sample if v != dataset.END_IDX])
+
+    generated_time_trajectories = []
+    for sample in time_samples:
+        generated_time_trajectories.append([v for v in sample if v != dataset.IGNORE_IDX])
+
+    for i, label in enumerate(labels):
+        format = label_to_format[label.item()]
+        generated_time_trajectories[i][len(format)] = 1
+        # remove elements after len(format)
+        generated_time_trajectories[i] = generated_time_trajectories[i][:len(format)+1]
+
+    return generated_trajectories, generated_time_trajectories
+
 
 def make_input_for_predict_next_location_on_all_stages(self, x, start_time=0):
     input = []

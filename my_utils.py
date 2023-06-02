@@ -5,7 +5,6 @@ import bisect
 import random
 from sklearn.preprocessing import normalize
 import pathlib
-from dataset import TrajectoryDataset
 import torch
 
 
@@ -22,25 +21,50 @@ import torch
 #     df.to_csv(output_file, header=None, index=None)
 
 
-def load_dataset(dataset, data_name, window_size, mask_start=1, random_mask=False):
+# def load_dataset(dataset, data_name, window_size, mask_start=1, random_mask=False):
     
-    data_path = get_datadir() / dataset / data_name
-    data = pd.read_csv(data_path / "training_data.csv", header=None).values
+#     data_path = get_datadir() / dataset / data_name
+#     data = pd.read_csv(data_path / "training_data.csv", header=None).values
+#     seq_len = len(data[0])
     
-    if window_size == 0:
-        window_size = len(data[0])-1
 
-    print(f"load data from {data_path / 'training_data.csv'}")
+#     print(f"load data from {data_path / 'training_data.csv'}")
+#     print(f'creating dataset..., mask_start {mask_start}')
     
-    print(f'creating dataset..., mask_start {mask_start}')
+#     with open(data_path / "params.json", "r") as f:
+#         param = json.load(f)
+#     n_bins = param["n_bins"]
     
-    with open(data_path / "params.json", "r") as f:
-        param = json.load(f)
-    n_bins = param["n_bins"]
-    
-    dataset = TrajectoryDataset(data, window_size, len(data[0]), n_bins, f"{dataset}/{data_name}", random_mask, mask_start)
-    return dataset
+#     dataset = TrajectoryDataset(data, window_size, len(data[0]), n_bins, f"{dataset}/{data_name}", random_mask, mask_start)
+#     return dataset
                  
+
+def load_dataset(data_dirs):
+    trajectories = []
+
+    for data_dir in data_dirs:
+        print(f"load data from {data_dir}")
+        data = pd.read_csv(data_dir, header=None).astype(str).values
+        
+        # check if data is trajectory or time
+        # if a row includes "_", it is time
+        # if "_" in data[0][0]:
+        #     is_time = True
+        # else:
+        #     is_time = False
+
+        for trajectory in data:
+            # remove traj that includes "None"
+            # if "None" in trajectory:
+            #     continue
+            # if is_time:
+            #     trajectory = [(int(v.split("_")[0]), int(v.split("_")[1])) for v in trajectory if v != 'nan']
+            # else:
+            #     trajectory = [int(float(v)) for v in trajectory if v != 'nan']
+            trajectory = [int(float(v)) for v in trajectory if (v != 'nan') and (v != "None")]
+            trajectories.append(trajectory)
+    print("length of dataset: ", len(trajectories))
+    return trajectories
                  
 def get_datadir():
     with open(f"config.json", "r") as f:
@@ -53,11 +77,11 @@ def get_gps(dataset):
     df = pd.read_csv(get_datadir() / f"{dataset}/gps.csv", header=None)
     return df.values[:,1], df.values[:,0]
 
-def get_maxdistance(dataset):
-    X, Y = get_gps(dataset)
-    dx = X[0] - X[-1]
-    dy = Y[0] - Y[-1]
-    return np.sqrt(dx**2 + dy**2)
+# def get_maxdistance(dataset):
+#     X, Y = get_gps(dataset)
+#     dx = X[0] - X[-1]
+#     dy = Y[0] - Y[-1]
+#     return np.sqrt(dx**2 + dy**2)
 
 def make_gps(lat_range, lon_range, n_bins):
     
